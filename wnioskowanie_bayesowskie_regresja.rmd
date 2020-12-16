@@ -1,0 +1,719 @@
+---
+title: "Metody Bayesowskie - Projekt 2"
+author: "Estera Saidło, Wiktoria Szczypka, Paweł Warchoł"
+date: "25 maja 2020"
+output:
+  html_document: 
+    code_folding: hide
+
+---
+<style>
+body {
+text-align: justify}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+### Cel projektu i opis danych
+
+  Celem projektu jest zastosowanie wnioskowania bayesowskiego w regresji wielorakiej na podstawie danych "Boston Housing", które są wbudowane w R i znajdują się w pakiecie mlbench. Dane dotyczą wartości domów na przedmieściach Bostonu. 
+  
+Zostały podzielone na 3 części:
+
+1) Dane, na podstawie których zostanie stworzony model MNK, który posłuży do wyznaczenia rozkładu a priori (100 obserwacji).
+
+2) Dane użyte do części właściwej badania (400 obserwacji).
+
+3) Dane użyte do prognozy (6 obserwacji). 
+
+Prognozy uzyskane za pomocą wnioskowania bayesowskiego zostaną porównane z prognozami Metody Najmniejszych Kwadratów. 
+
+
+<u><b>Zmienna objaśniana:</b></u>
+
+  <b>MEDV</b> - mediana wartości domów na przedmieściach Bostonu (w tysiącach dolarów).
+
+<u><b>Zmienne objaśniające:</b></u>
+
+  <b>RM</b> - średnia liczba pokoi w domu,
+
+  <b>CRIM</b> - wskaźnik przestępczości na mieszkańca,
+
+  <b>LSTAT</b> - procent populacji o niższym statusie społecznym,
+
+  <b>PTRATIO</b> - stosunek liczby uczniów do nauczycieli w danym obszarze podmiejskim,
+
+  <b>INDUS</b> - odsetek niedetalicznych akrów biznesowych w danym obszarze podmiejskim.
+
+```{r}
+library(mlbench)
+library(psych)
+library(dplyr)
+library(knitr)
+data("BostonHousing")
+summary(BostonHousing[,c("medv","rm", "crim", "lstat", "ptratio", "indus")])
+```
+
+Zmienna objaśniana znajduje się w przedziale od 5 do 50 tysięcy dolarów. Wartość maksymalna wydaje się być wartością skrajną, gdyż 3 kwantyl jest na poziomie 25 tysięcy dolarów. Oznacza, to, że 75% obserwacji przyjmuje wartość 25 tysięcy dolarów lub mniej. Średnia liczba pokoi w domu znajduje się w przedziale między 3.5 a 8.8. Średnio w domu znajduje się ok. 6 pokoi. Średni wskaźnik przestępczości na mieszkańca wynosi ponad 3, co oznacza, że średnio na 1 mieszkańca przedmieść Bostonu przypadają między 3 a 4 przestępstwa. Wartość maksymalna to prawie 89 przestępstw na jednego mieszkanca, jednak tutaj także można zauważyć, że wartość ta będzie outlierem. Średnio jest 12% ludzi o niższym statusie społecznym, maksymalnie jest to prawie 38%, a minimalnie mniej niż 2%. Stosunek liczby uczniów do liczby nauczycieli jest między 12.6 a 22. Średnio na 1 nauczyciela przypada ok. 18 uczniów. Odsetek niedetalicznych akrów biznesowych znajduje się w przedziale od 0.26% do 27.74%. Średnio jest to 11.14% akrów na miasto.
+
+
+```{r}
+data0 <- BostonHousing[c(1:100), c("medv","rm", "crim", "lstat", "ptratio", "indus")]
+data <- BostonHousing[c(101:500), c("medv","rm", "crim", "lstat", "ptratio", "indus")]
+dataprog <- BostonHousing[c(501:506), c("medv","rm", "crim", "lstat", "ptratio", "indus")]
+```
+
+### Rozkład a priori
+
+
+Model stworzony za pomocą Metody Najmniejszych Kwadratów służący do oszacowania parametrów rozkładu a priori:
+
+```{r}
+model0 <- lm(data = data0, medv ~ .)
+summ0 <- summary(model0)
+summ0
+```
+
+Zmiennymi najbardziej wpływającymi na kształtowanie się wartości domów w Bostonie w modelu nr. 1 są: średnia liczba pokoi w domu oraz odsetek ludzi o niższym statusie. Średnia liczba pokoi jest jedyną zmienną, której wzrost powoduje wzrost zmiennej objaśnianej. Wzrost pozostałych zmiennych wpływa negatywnie na wzrost wartości domów. Jednak stosunek liczby do nauczycieli nie jest istotny w kontekście kształtowania się wartości domów w Bostonie. Współczynnik determinacji $R^2$ jest na poziomie prawie 84%. Można więc przyjąć, że taki zestaw zmiennych objaśniających całkiem dobrze opisuje zmienność zmiennej objaśnianej.
+
+
+Parametry rozkładu a priori zostały dobrane na podstawie modelu MNK stworzonym z pierwszej cześci danych. 
+Wektor $\beta_0$ to oszacowane współczynniki modelu. Macierz $X_0$ to zmienne objaśniające pierwszej części danych, które poprzedza kolumna 1, reprezentująca stałą. Macierz $SIGMA_0$ to odwrotność macierzy $X_0^TX_0$, $\alpha_0$ to róznica liczby obserwacji i liczby kolumn pierwszej czesci danych, a $\delta_0$ to suma kwadratów reszt z modelu.
+
+```{r}
+beta0 <- as.vector(model0$coefficients)
+X0 <- matrix(data = c( rep(1, 100) , data0[,2], data0[,3], data0[,4], data0[,5],data0[,6] ), ncol = 6)
+sigma0 <- solve(t(X0) %*% X0)
+alfa0 <- nrow(data0)-ncol(data0)
+delta0 <- sum(model0$residuals^2)
+```
+
+### Model MNK
+
+Został stworzony model MNK na danych przeznaczonych do właściwej części badania. Na jego podstawie zostanie sprawdzone spełnienie założeń dotyczących reszt oraz dokonana będzie prognoza dla danych z części 3.
+
+```{r}
+modelMNK <- lm(data = data, medv ~ .)
+betaMNK <- modelMNK$coefficients
+summary(modelMNK)
+```
+
+Model MNK stworzony na drugiej części danych wskazuje na dużą istotność zmiennych: średnia liczba pokoi w domu, odsetek ludzi o niższym statusie oraz stosunek uczniów do nauczycieli. W modelu nr. 1 stosunek uczniów do nauczycieli okazał się być nieistotny. Taka rozbieżność wynika najprawdopodobniej z nierównomiernego rozkładu danych. Można więc wnioskować, że informacja dotycząca tej zmiennej w rozkładzie a priori nie będzie pomocna. Nieistotna w tym modelu okazała się zmienna dotycząca odsetka niedetalicznych akrów biznesowych na danym obszarze podmiejskim, natomiast w poprzednim modelu była istotna na poziomie 10%. Wskaźnik przestępczości jest istotny na poziomie 5% w obu modelach.
+
+<b>Interpretacja oszacowań parametrów:</b>
+
+- Przy wzroście średniej liczby pokoi w domu o 1 jednostkę, mediana wartości domów na przedmieściach Bostonu  wzrasta o ok. 4.18 tysięcy dolarów przy założeniu, że pozostałe zmienne są na stałym poziomie.
+
+- Przy wzroście wskaźnika przestępczości na mieszkańca o 1 jednostkę, mediana wartości domów na przedmieściach Bostonu  maleje o ok. 0.07 tysięcy dolarów przy założeniu, że pozostałe zmienne są na stałym poziomie.
+
+- Przy wzroście procentu populacji o niższym statusie społecznym o 1 jednostkę, mediana wartości domów na przedmieściach Bostonu  maleje o ok. 0.59 tysięcy dolarów przy założeniu, że pozostałe zmienne są na stałym poziomie.
+
+- Przy wzroście stosunku liczby uczniów do nauczycieli na danym obszarze podmiejskim o 1 jednostkę, mediana wartości domów na przedmieściach Bostonu  maleje o ok. 0.87 tysięcy dolarów przy założeniu, że pozostałe zmienne są na stałym poziomie.
+
+- Przy wzroście odsetka niedetalicznych akrów biznesowych na danym obszarze podmiejskim o 1 jednostkę, mediana wartości domów na przedmieściach Bostonu  wzrasta o ok. 0.01 tysięcy dolarów przy założeniu, że pozostałe zmienne są na stałym poziomie.
+
+<b> Sprawdzenie założeń dotyczących reszt modelu:</b>
+
+Normalność reszt została zbadana za pomocą testu Shapiro-Wilka, którego $H_0$ stanowi o normalności reszt.
+
+```{r}
+shapiro.test(modelMNK$residuals)
+```
+
+
+P-value jest mniejsze od 5%, co oznacza, że $H_0$ nalezy odrzucić na rzecz $H_1$, a więc reszty nie mają rozkładu normalnego. Jednak ze względu na dużą liczbę obserwacji, można założyć asymptotyczną normalność reszt.
+
+W celu zbadania autokorelacji zostanie przeprowadzony test Durbina-Watsona, którego $H_0$ stanowi o braku autokorelacji reszt.
+
+```{r}
+library(car)
+ncvTest(modelMNK)
+```
+
+Wartość p-value wskazuje na odrzucenie $H_0$ na rzecz $H_1$, co oznacza, że występuje autokorelacja reszt.
+
+
+Heteroskedastycznośc została zbadana na podstawie testu Breucha-Pagana o następujących hipotezach:
+
+$H_0$: Homoskedastyczność.
+
+$H_1$: Heteroskedastyczność.
+
+```{r}
+library(lmtest)
+dwtest(modelMNK)
+
+```
+
+Wartość p-value wskazuje na to, że nie ma podstaw by odrzucić $H_0$, co oznacza homoskedastyczność modelu.
+
+Badane dane są przekrojowe, więc nie ma sensu sprawdzać dla nich autokorelacji.
+
+### Rozkład a posteriori
+
+Na podstawie rozkładu a priori wyznaczone zostaną parametry rozkładu a posteriori według poniższych wzorów.
+
+```{r , echo=FALSE, out.width = '50%'}
+knitr::include_graphics("wzorki.png")
+```
+
+Funkcja `calc_pars` zwraca obliczone parametry rozkładu.
+
+```{r}
+calc_pars <- function(X, SIGMA, y, beta0, alfa0, n, delta0){
+  
+  #format: macierz
+  X <- matrix(data = c( rep(1, n) , X[,1], X[,2], X[,3], X[,4], X[,5] ), ncol = 6)
+  SIGMA <- as.matrix(SIGMA)
+  y <- as.matrix(y)
+  
+  SIGMA1 <- solve( t(X) %*% X + solve(SIGMA))
+  
+  beta1 <- SIGMA1 %*% ( t(X) %*% y + solve(SIGMA) %*% beta0)
+  
+  alfa1 <- alfa0 + n
+  delta1 <- delta0 + t(y) %*% y - t(beta1) %*% solve(SIGMA1) %*% beta1 + t(beta0)%*%solve(SIGMA)%*%beta0
+  
+  return(list(alfa1 = alfa1, delta1 = as.numeric(delta1), sigma1 = SIGMA1, beta1 = beta1))
+}
+
+pars <- calc_pars(X = data[,-1], SIGMA = sigma0, y = data[,1], beta0 = beta0, alfa0 = alfa0, n = nrow(data), delta0 = delta0)
+```
+
+Wartość parametru $\alpha_1$:
+```{r}
+pars$alfa1
+```
+
+Wartość parametru $\delta_1$:
+```{r}
+pars$delta1
+```
+
+Macierz $\Sigma_1$:
+```{r}
+pars$sigma1
+```
+
+Macierz $\beta_1$:
+```{r}
+pars$beta1
+```
+
+
+### Rozkłady brzegowe parametrów
+
+Na podstawie powyżej obliczonych parametrów wielowymiarowego rozkładu a posteriori obliczone zostały parametry rozkładów brzegowych $\sigma^2$ oraz poszczególnych $\beta$.
+
+Poniżej przedstawiono rozkład a priori i a posteriori $\sigma^2$. W tym celu skorzystano z poniższego wzoru.
+
+```{r , echo=FALSE, out.width = '30%'}
+knitr::include_graphics("sigma.png")
+```
+
+
+```{r}
+library(bayesAB)
+library(ggplot2)
+library(gridExtra) #wstawianie kilku wykresów ggplot w 1 polu
+library(grid)
+
+w1 = plotInvGamma(shape = alfa0/2, scale = delta0/2) + ggtitle('Rozkład a priori')
+w2 = plotInvGamma(shape = pars$alfa1/2, scale = pars$delta1/2) + ggtitle('Rozkład a posteriori')
+
+grid.arrange(nrow = 1, w1,w2)
+```
+
+Widać, że jeśli chodzi o kształt rozkładu to zmienił się on dość nieznacznie - wygląda dość podobnie. Jeśli jednak sporzymy na oś X, to widać, ze uległy one znacznej zmianie. Na podstawie rozkładu a priori spodziewalibyśmy się, ze przyjmuje on wartość między 3.5, a 8.5, natomiast rozkład a posteriori sugeruje, ze jest to przedział 20-35.
+
+
+Funkcja `rozkl_brzeg_beta` oblicza paramtery rozkładów brzegowych dla poszczególnych $\beta$. Funkcja oblicza rozkłady na podstawie poniższego wzoru. 
+
+```{r , echo=FALSE, out.width = '30%'}
+knitr::include_graphics("brzegowe1.png")
+```
+
+```{r}
+rozkl_brzeg_beta <- function(beta1, sigma1, alfa1, delta1){
+  
+  beta1 <- as.vector(beta1)
+  res <- list()
+  
+  for (i in 1:length(beta1)){
+    scale_par <- delta1/alfa1*sigma1[i,i]
+    res <- c(res, list(c(ex = beta1[i], scale = scale_par, alfa = alfa1)))
+    names(res)[i] <- paste0("beta", as.character(i))
+  }
+  
+  return(res)
+}
+
+```
+
+Funkcja ta zostanie zastosowana zarówno do obliczenia brzegowych rozkładów (dla poszczególnych $\beta$) a priori jak i a posteriori. Uzyskane zostaną 3 parametry rozkładu t: wartość oczekiwana, skala oraz stopnie swobody. W celu ich wizualizacji posłużono się wbudowaną funkcją `dt.scaled`.
+
+```{r}
+rozklady_brzegowe <- rozkl_brzeg_beta(beta1 = pars$beta1, alfa1 = pars$alfa1,
+                                      delta1 = pars$delta1, sigma1 = pars$sigma1)
+
+rozklady_brzegowe0 <- rozkl_brzeg_beta(beta1 = beta0, alfa1 = alfa0,
+                                      delta1 = delta0, sigma1 = sigma0)
+
+```
+
+
+```{r}
+library(metRology)
+par(mfrow=c(3,2))
+
+#beta1
+dist_beta1_0 <- dt.scaled(df = rozklady_brzegowe0$beta1[[3]], mean = rozklady_brzegowe0$beta1[[1]], sd = rozklady_brzegowe0$beta1[[2]], x = seq(-170,150) )
+plot(dist_beta1_0, x = seq(-170,150), xlab = "", main=expression(paste("Rozkład a priori ", beta[1] )), type='l', lwd=3)
+dist_beta1 <- dt.scaled(df = rozklady_brzegowe$beta1[[3]], mean = rozklady_brzegowe$beta1[[1]], sd = rozklady_brzegowe$beta1[[2]], x = seq(-100,100) )
+plot(dist_beta1, x = seq(-100,100), xlab = "", main=expression(paste("Rozkład a posteriori ", beta[1] )), type='l', lwd=3)
+#beta2
+dist_beta2_0 <- dt.scaled(df = rozklady_brzegowe0$beta2[[3]], mean = rozklady_brzegowe0$beta2[[1]], sd = rozklady_brzegowe0$beta2[[2]], x = seq(5,9,0.01) )
+plot(dist_beta2_0, x = seq(5,9,0.01), xlab = "",main=expression(paste("Rozkład a priori ", beta[2] )), type='l', lwd=3)
+dist_beta2 <- dt.scaled(df = rozklady_brzegowe$beta2[[3]], mean = rozklady_brzegowe$beta2[[1]], sd = rozklady_brzegowe$beta2[[2]], x = seq(3,6,0.01) )
+plot(dist_beta2, x = seq(3,6,0.01), xlab = "", main=expression(paste("Rozkład a posteriori ", beta[2] )), type='l', lwd=3)
+#beta3
+dist_beta3_0<- dt.scaled(df = rozklady_brzegowe0$beta3[[3]], mean = rozklady_brzegowe0$beta3[[1]], sd = rozklady_brzegowe0$beta3[[2]], x = seq(-6,1,0.01) )
+plot(dist_beta3_0,  x = seq(-6,1,0.01), xlab = "",main=expression(paste("Rozkład a priori ", beta[3] )), type='l', lwd=3)
+dist_beta3 <- dt.scaled(df = rozklady_brzegowe$beta3[[3]], mean = rozklady_brzegowe$beta3[[1]], sd = rozklady_brzegowe$beta3[[2]], x = seq(-0.08,-0.06,0.00001) )
+plot(dist_beta3, x = seq(-0.08,-0.06,0.00001), xlab = "", main=expression(paste("Rozkład a posteriori ", beta[3] )), type='l', lwd=3)
+
+par(mfrow=c(3,2))
+#beta4
+dist_beta4_0 <- dt.scaled(df = rozklady_brzegowe0$beta4[[3]], mean = rozklady_brzegowe0$beta4[[1]], sd = rozklady_brzegowe0$beta4[[2]], x = seq(-.31,-.25,0.0001) )
+plot(dist_beta4_0, x = seq(-.31,-.25,0.0001), xlab = "", main=expression(paste("Rozkład a priori ", beta[4] )), type='l', lwd=3)
+dist_beta4 <- dt.scaled(df = rozklady_brzegowe$beta4[[3]], mean = rozklady_brzegowe$beta4[[1]], sd = rozklady_brzegowe$beta4[[2]], x = seq(-.57,-.54,0.0001) )
+plot(dist_beta4, x = seq(-.57,-.54,0.0001), xlab = "", main=expression(paste("Rozkład a posteriori ", beta[4] )), type='l', lwd=3)
+#beta5
+dist_beta5_0 <- dt.scaled(df = rozklady_brzegowe0$beta5[[3]], mean = rozklady_brzegowe0$beta5[[1]], sd = rozklady_brzegowe0$beta5[[2]], x = seq(-.3,0,0.001) )
+plot(dist_beta5_0, x = seq(-.3, 0 ,0.001), xlab = "", main=expression(paste("Rozkład a priori ", beta[5] )), type='l', lwd=3)
+dist_beta5 <- dt.scaled(df = rozklady_brzegowe$beta5[[3]], mean = rozklady_brzegowe$beta5[[1]], sd = rozklady_brzegowe$beta5[[2]], x = seq(-.95,-.8,0.001) )
+plot(dist_beta5, x = seq(-.95,-.8,0.001), xlab = "", main=expression(paste("Rozkład a posteriori ", beta[5] )), type='l', lwd=3)
+#beta6
+dist_beta6_0 <- dt.scaled(df = rozklady_brzegowe0$beta6[[3]], mean = rozklady_brzegowe0$beta6[[1]], sd = rozklady_brzegowe0$beta6[[2]], x = seq(-.2,-.12,0.0001) )
+plot(dist_beta6_0, x = seq(-.2, -.12, 0.0001), xlab = "", main=expression(paste("Rozkład a priori ", beta[6] )), type='l', lwd=3)
+dist_beta6 <- dt.scaled(df = rozklady_brzegowe$beta6[[3]], mean = rozklady_brzegowe$beta6[[1]], sd = rozklady_brzegowe$beta6[[2]], x = seq(0.01,0.04,0.0001) )
+plot(dist_beta6, x = seq(0.01,0.04,0.0001), xlab = "", main=expression(paste("Rozkład a posteriori ", beta[6] )), type='l', lwd=3)
+```
+
+Z powyższych wykresów można stwierdzić, iż postacie rozkładu uległy zmianie. Gęstości rozkładu a posteriori są 'węższe' niż w przypadku gęstości a priori, tzn. rozstępy przedziałów, w których na X% spodziewamy się wartości danego parametru są mniejsze.
+
+W przypadku $\beta_6$ można zauważyć zmianę znaku parametru. Pozostałe rozkład parametrów ulegały mniejszym lub większym zmianom jeśli chodzi o ich wartości, ale spodziewany znak parametru pozostawał ten sam.
+
+
+### Bayesowskie estymatory
+
+Bayesowskie estymatory, przy założeniu kwadratowej funkcji straty, są równe wartości oczekiwanej rozkładów brzegowych poszczególnych parametrów. Są już więc one wyznaczone.
+
+```{r}
+betaBayes <- as.vector(pars$beta1)
+nazwy <- names(betaMNK)
+names(betaBayes) <- nazwy
+betaBayes
+```
+
+<b>Interpretacja oszacowań parametrów uzyskanych za pomocą metod Bayesowskich:</b>
+
+- Przy wzroście średniej liczby pokoi w domu o 1 jednostkę, mediana wartości domów na przedmieściach Bostonu  wzrasta o ok. 4.61 tysięcy dolarów przy założeniu, że pozostałe zmienne są na stałym poziomie.
+
+- Przy wzroście wskaźnika przestępczości na mieszkańca o 1 jednostkę, mediana wartości domów na przedmieściach Bostonu  maleje o ok. 0.07 tysięcy dolarów przy założeniu, że pozostałe zmienne są na stałym poziomie.
+
+- Przy wzroście procentu populacji o niższym statusie społecznym o 1 jednostkę, mediana wartości domów na przedmieściach Bostonu  maleje o ok. 0.55 tysięcy dolarów przy założeniu, że pozostałe zmienne są na stałym poziomie.
+
+- Przy wzroście stosunku liczby uczniów do nauczycieli na danym obszarze podmiejskim o 1 jednostkę, mediana wartości domów na przedmieściach Bostonu  maleje o ok. 0.87 tysięcy dolarów przy założeniu, że pozostałe zmienne są na stałym poziomie.
+
+- Przy wzroście odsetka niedetalicznych akrów biznesowych na danym obszarze podmiejskim o 1 jednostkę, mediana wartości domów na przedmieściach Bostonu  wzrasta o ok. 0.03 tysięcy dolarów przy założeniu, że pozostałe zmienne są na stałym poziomie.
+
+W celu zbadania istotności obliczonych parametrów wyznaczono ich HPDI (*highest posterior density interval*), użyto w tym celu wbudowanej funkcji `hdi`.
+
+```{r}
+library(HDInterval)
+
+set.seed(1234)
+
+hpdi <- list()
+
+for( i in 1:length(rozklady_brzegowe)) {
+  tmp <- hdi(rt.scaled(n = 1000,df = rozklady_brzegowe[[i]][[3]], mean = rozklady_brzegowe[[i]][[1]], sd = rozklady_brzegowe[[i]][[2]]))
+  hpdi <- c(hpdi, list(c(tmp[1], tmp[2])))
+  names(hpdi)[i] <- paste0("hpdi_", names(betaMNK)[i])
+}
+
+hpdi
+```
+
+Powyżej przedstawiono Bayesowski odpowiednik 95% przedziału ufności. Można zauważyć iż w przypadku $\beta_1$ do przedziału należy 0 - oznacza to, iż wyraz wolny jest niestotny. Pozostałe parametry są istotne. 
+
+Poniżej przedstawiono parametry uzyskane za pomocą metody MNK oraz metod Bayesowskich.
+
+**MNK:**
+```{r}
+betaMNK
+```
+
+**Bayes:**
+```{r}
+betaBayes
+```
+
+Można zauważyć, że uzyskane współczynniki parametrów są do siebie podobne. Większą różnicę można zauważyć jedynie w przypadku wyrazu wolnego.
+
+### Prognozowanie
+
+W celu wyznaczenia Bayesowskich prognoz należy wyznaczyć rozkłady predykcyjne. Celem będzie stworzenie prognoz dla odłożonych 6 obserwacji. 
+
+Poniżej wzór na m-wymiarowy rozkład predykcyjny. Analogicznie jak w przypadku wcześniejszych kroków, należy wyznaczyć rozkłady brzegowe poszczególnych y.
+
+```{r , echo=FALSE, out.width = '30%'}
+knitr::include_graphics("prognozka.png")
+```
+
+Tak przedstawiają się obserwacje na podstawie których wykonane zostanie prognozowanie:
+
+```{r}
+alfa1 <- pars$alfa1
+
+#format: macierz
+data.matrix(dataprog[,-1])
+Xt <- matrix(data = c( rep(1, nrow(dataprog)) , dataprog[,2], dataprog[,3], dataprog[,4], dataprog[,5], dataprog[,6] ), ncol = 6)
+ex <- Xt %*% as.matrix(pars$beta1)
+
+scale <- (pars$delta1 / alfa1) * (diag(1,ncol = nrow(dataprog), nrow =nrow(dataprog) ) +  Xt %*% as.matrix(pars$sigma1) %*% t(Xt) )
+
+
+rozklady_brzegowe_y <- list()
+  
+for (i in 1:length(ex)){
+    
+  rozklady_brzegowe_y <- c(rozklady_brzegowe_y, list(c(ex = ex[i], scale = scale[i,i], alfa = alfa1)))
+  names(rozklady_brzegowe_y)[i] <- paste0("yp", as.character(i))
+}
+
+
+```
+
+
+
+Poniżej przedstawiono wykresy rozkładów predykcyjnych dla $y_i, i = 1...6$.
+
+
+```{r}
+#plot.new()
+#text(0.5,0.5,"First title",cex=2,font=2)
+
+par(mfrow=c(3,2))
+
+dist_y1 <- dt.scaled(df = rozklady_brzegowe_y$yp1[[3]], mean = rozklady_brzegowe_y$yp1[[1]], sd = rozklady_brzegowe_y$yp1[[2]], x = seq(-75,125,.1) )
+plot(dist_y1, x = seq(-75,125,.1), xlab = "", type = "l", lwd = 2)
+
+dist_y2 <- dt.scaled(df = rozklady_brzegowe_y$yp2[[3]], mean = rozklady_brzegowe_y$yp2[[1]], sd = rozklady_brzegowe_y$yp2[[2]], x = seq(-75,125,.1) )
+plot(dist_y2, x = seq(-75,125,.1), xlab = "", type = "l", lwd = 2)
+
+dist_y3<- dt.scaled(df = rozklady_brzegowe_y$yp3[[3]], mean = rozklady_brzegowe_y$yp3[[1]], sd = rozklady_brzegowe_y$yp3[[2]], x = seq(-75,125,.1) )
+plot(dist_y3,  x = seq(-75,125,.1), xlab = "", type = "l", lwd = 2)
+
+dist_y4 <- dt.scaled(df = rozklady_brzegowe_y$yp4[[3]], mean = rozklady_brzegowe_y$yp4[[1]], sd = rozklady_brzegowe_y$yp4[[2]], x = seq(-75,125,.1))
+plot(dist_y4, x = seq(-75,125,.1), xlab = "", type = "l", lwd = 2)
+
+dist_y5 <- dt.scaled(df = rozklady_brzegowe_y$yp5[[3]], mean = rozklady_brzegowe_y$yp5[[1]], sd = rozklady_brzegowe_y$yp5[[2]], x = seq(-75,125,.1) )
+plot(dist_y5, x = seq(-75,125,.1), xlab = "", type = "l", lwd = 2)
+
+
+dist_y6 <- dt.scaled(df = rozklady_brzegowe_y$yp6[[3]], mean = rozklady_brzegowe_y$yp6[[1]], sd = rozklady_brzegowe_y$yp6[[2]], x = seq(-75,125,.1) )
+plot(dist_y6, x = seq(-75,125,.1), xlab = "", type = "l", lwd = 2)
+
+
+
+```
+
+Poniżej prognoza poszczególnych obserwacji, która jest równa wartości oczekiwanej (przy założeniu kwadratowej funkcji straty). Przedstawiono również prognozę uzyskaną metodą MNK oraz rzeczywistą wartość.
+
+```{r}
+library(kableExtra)
+
+MNKprog <- predict(modelMNK,dataprog)
+punktowa = data.frame(MNK = MNKprog, Bayes=ex, rzeczywiste = dataprog$medv)
+punktowa%>% kable() %>% kable_styling()
+```
+
+Można zobserwować, iż prognozy uzyskane za pomocą MNK oraz metod Bayesowskich nie różnią się zbytnio - maksymalna różnica między nimi to ok. 0.6. Jednakże porównując uzyskane prognozy z rzeczywistymi wartościami jednoznacznie widać duże różnice. Prognozy w każdym przypadku są zawyżone.
+
+Dla uzyskanych prognoz obliczony został HPDI. Dla uzyskanego modelu MNK obliczono przedziały ufności na poziomie 95%. Poniżej przedstawiono uzyskane wyniki.
+
+```{r}
+hpdi_y <- list()
+
+for( i in 1:length(rozklady_brzegowe_y)) {
+  tmp <- hdi(rt.scaled(n = 1000,df = rozklady_brzegowe_y[[i]][[3]], mean = rozklady_brzegowe_y[[i]][[1]], sd = rozklady_brzegowe_y[[i]][[2]]))
+  hpdi_y <- c(hpdi_y, list(c(tmp[1], tmp[2])))
+  names(hpdi_y)[i] <- paste0("hpdi_y", as.character(i))
+}
+
+lower <- c()
+upper <- c()
+for(i in 1:length(hpdi_y)){
+  lower[i] = hpdi_y[[i]][[1]]
+  upper[i] = hpdi_y[[i]][[2]]
+}
+BayesprogInterval <- data.frame(lwr=lower,upr=upper)
+
+MNKprogInterval <- predict(modelMNK,dataprog,interval = "confidence")
+
+przedzialowa = data.frame(MNK = MNKprogInterval[,2:3],Bayes=BayesprogInterval)
+przedzialowa%>% kable() %>% kable_styling()
+
+```
+
+Widzimy, że przedziały modelu MNK są zdecydowanie mniejsze niż HPDI wyznaczone dla podejścia Bayesowskiego. HPDI ma bardzo duży rozstęp - wskazuje, iż średnia cena mieszkania może być ujemna!
+
+```{r}
+library(Metrics)
+RMSE_MNK <- rmse(punktowa$rzeczywiste,punktowa$MNK)
+MAE_MNK <- mae(punktowa$rzeczywiste,punktowa$MNK)
+MAPE_MNK<-mape(punktowa$rzeczywiste,punktowa$MNK)
+
+
+RMSE_Bayes<-rmse(punktowa$rzeczywiste,punktowa$Bayes)
+MAE_Bayes<- mae(punktowa$rzeczywiste,punktowa$Bayes)
+MAPE_Bayes<-mape(punktowa$rzeczywiste,punktowa$Bayes)
+
+tab_bledow <- data.frame(RMSE = c(RMSE_MNK,RMSE_Bayes), MAE = c(MAE_MNK,MAE_Bayes), MAPE = c(MAPE_MNK,MAPE_Bayes), row.names = c("MNK", "BAYES"))
+tab_bledow %>% kable() %>% kable_styling()
+
+```
+
+Pomimo otrzymania ogromnych przedziałów HPDI dla modelu bayesowskiego, błędy prognoz w przypadku obu podejść są podobne - co nie dziwi biorąc pod uwagę, że prognozy były na bardzo zbliżonym poziomie w przypadku obydwu modeli. Nienzacznie mniejsze w każdym przypadku są one jednak dla modelu otrzymaego na podstawie podejścia Bayesowskiego.
+
+###Istotność zmiennych crim oraz indus
+
+W kolejnym etapie zbadana zostanie łączna istotność zmiennych crim i indus poprzez zastosowanie tradycyjnego testu F dla modelu MNK oraz poprzez porównanie modeli dla sposobu bayesowskiego.
+
+
+W tym celu stworzono odpowiedni model bayesowski analogicznie jak we wcześniejszej fazie, z pominięciem 2 wymienionych wcześniej zmiennych. Przyjęto a priori, że nie mamy żadnego przekonania cd. wyższości któregoś z modeli nad drugim - prawdopodobieństwa a priori w takim wypadku są równe P(M1) = P(M2) = 1/2, gdzie jako M1 przyjęto model bez restrykcji, a jako model M2 - z restrykcjami. O wyniku tego porownania świadczył będzie w takim wypadku tzw. czynnik bayesowski. Jednak ze względu na jego charakterystykę (występowanie funkcji gamma) oraz spore wartości liczbowe dla naszych modeli (np wartości wsp. delta większe od 10 000 czy współczynniki alfa na poziomie niemal 500) niezbędne było odpowiednie uproszczenie tego wzoru poprzez skrócenie odpowiednich wartości. Otrzymano wyniki jak poniżej.
+
+
+```{r}
+###restrykcje bayesowski sposob 
+{
+  
+#indus i crim
+model0R <- lm(data = data0, medv ~ rm + lstat + ptratio)
+summ0R <- summary(model0R)
+
+#wzory np. W5 7 slajd
+#wektor oszacowan  parametrow modelu beta0 na podst wczesniejszego badania
+beta0R <- as.vector(model0R$coefficients)
+#format: macierz
+X0R <- matrix(data = c( rep(1, 100) , data0[,2],  data0[,4], data0[,5]), ncol = 4)
+sigma0R <- solve(t(X0R) %*% X0R)
+#parametry rozkładu IG
+alfa0R <- nrow(data0)-ncol(data0)-2
+delta0R <- sum(model0R$residuals^2)
+
+calc_pars <- function(X, SIGMA, y, beta0, alfa0, n, delta0){
+  
+  #format: macierz
+  X <- matrix(data = c( rep(1, n) , X[,1], X[,2], X[,3]), ncol = 4)
+  SIGMA <- as.matrix(SIGMA)
+  y <- as.matrix(y)
+  
+  SIGMA1 <- solve( t(X) %*% X + solve(SIGMA))
+  
+  beta1 <- SIGMA1 %*% ( t(X) %*% y + solve(SIGMA) %*% beta0)
+  
+  alfa1 <- alfa0 + n
+  delta1 <- delta0 + t(y) %*% y - t(beta1) %*% solve(SIGMA1) %*% beta1 + t(beta0)%*%solve(SIGMA)%*%beta0
+  
+  return(list(alfa1 = alfa1, delta1 = as.numeric(delta1), sigma1 = SIGMA1, beta1 = beta1))
+}
+
+parsR <- calc_pars(X = data[,-1], SIGMA = sigma0R, y = data[,1], beta0 = beta0R, delta0 = delta0R, alfa0 = alfa0R, n = nrow(data))
+
+pyM1_p1 <- sqrt(det(sigma0)/det(pars$sigma1))
+pyM2_p1 <- sqrt(det(sigma0R)/det(parsR$sigma1))
+cz1 <- pyM1_p1/pyM2_p1
+
+cz2 <- ((delta0/delta0R)^46)*delta0*((parsR$delta1/pars$delta1)^246)/pars$delta1
+
+cz3 <- 246/46
+
+R12 <- cz1*cz2*cz3
+
+print("Wartość logarytmu z ilorazu szans a posteriori")
+log(R12)
+}
+
+```
+
+Widać wyraźnie, że wartość ta jest bardzo duża, co oznacza, że możemy wnioskować o wyższości modelu 1 (bez restrykcji) nad modelem z restrykcjami. Dla modelu MNK przeprowadzono test F. Otrzymano następujące wyniki:
+
+```{r}
+####test F
+{
+  #wyrzucamy indus i crim
+  library(car)
+  linearHypothesis(modelMNK, c("indus=0", "crim=0"))
+  #P>0.05 - nie odrzucamy H0, ne sa laczie istotne
+}
+
+```
+
+Powyżwszy wynik daje nie daje podstaw do odrzucenia H0 mówiącej o braku łączej istotności zmiennych indus i crim - jest to więc wynik odmienny do tego otrzymanego poprzez porównanie modeli bayesowskich. Jednak dla stworzonego modelu MNK zmienne indus i crim nie były istotne na poziomie isotności 1% (zmienna crim była istotna na poziomie 5%, natomiast indus nadal nie). W przypadku podejścia bayesowskiego przedziały HPDI nie wskazywały na brak istotności któregokolwiek z parametrów.
+
+
+### Algorytm Gibbsa
+
+W celu wyznaczenia rozkadów brzegowych a posteriori można również użyć podejścia symulacyjnego i zastosować algorytm Gibbsa, przy założeniu odpowiednich rozkładów warunowych parametrów $/Beta$ i $sigma^2$. Przeprowadzono 11 111 losowań, w których zgodnie z algorytmem Gibbsa losowano wartości pochodzące z odpowiednich rozkładoW warunkowych naszych nieznanych parametrów, po czym odrzucono 1111 obserwacji początkowych. Na podstawie pozostałych 10 tysięcy wylosowanych określono rozkłady brzegowe a posteriori.
+
+
+W algorytmie wykorzystano poniższe wzory na rozkłady warunkowe parametrów:
+
+```{r , echo=FALSE, out.width = '30%'}
+knitr::include_graphics("wzoryGibs.png")
+```
+
+```{r}
+
+#ALGORYTM GIBSA
+{
+  #wzory np. W5 7 slajd
+  #wektor oszacowan  parametrow modelu beta0 na podst wczesniejszego badania
+  
+  #za sime start bierzemy wartość oczekiwaną z rozkładu odwrotnego gamma - beta/(alfa-1)
+  sigma_start <- (delta0/2)/(alfa0/2 - 1)
+  losowanko <- 11111
+  
+  wyniki <- data.frame(1,2,3,4,5,6,7)
+  colnames(wyniki) <- c(names(modelMNK$coefficients),'sigma')
+  
+  X <- matrix(data = c( rep(1, nrow(data)) ,data[,2], data[,3], data[,4], data[,5], data[,6]), ncol = 6)
+  XtX <- t(X) %*% X
+  Xty <- t(X) %*% as.matrix(data[,1])
+  y <- data[,1]
+  
+  tmp_sigma_2 <- 1/sigma_start
+  
+  library(MASS)
+  library(invgamma)
+  
+  set.seed(181280)
+  for(i in 1:losowanko) {
+    tmp_sigma_duza = solve(tmp_sigma_2 * XtX + solve(sigma0))
+    tmp_beta <- tmp_sigma_duza %*% (tmp_sigma_2 * Xty + solve(sigma0)%*%beta0)
+    
+    wyniki[i,1:6] <- mvrnorm(n=1, mu=tmp_beta, Sigma=tmp_sigma_duza)
+    
+    tmp_delta <- delta0 + t(y - X%*% t(as.matrix(wyniki[i,1:6])) ) %*% (y-X%*% t(as.matrix(wyniki[i,1:6])) )
+
+    wyniki[i,7] <- rinvgamma(n=1, shape = pars$alfa1/2,rate = tmp_delta/2)
+    
+    
+    tmp_sigma_2 <- 1/wyniki[i,7]
+  }
+  
+  wyniki <- wyniki[-(1:1111),]
+  
+  prognozy <- c()
+  odchylenie <- c()
+  for(i in 1:ncol(wyniki)) {
+    prognozy[i] <- mean(wyniki[,i])
+    odchylenie[i] <- sd(wyniki[,i])
+  }
+}
+
+
+```
+
+
+Na podstawie otrzymanych rozkładów wyznaczono punktowe oceny parametrów (jako średnie) oraz ich błędy (odchylenia standardowe).
+
+Wyznaczone prognozy:
+
+```{r}
+names(prognozy) <- colnames(wyniki)
+round(prognozy,3)
+```
+
+Wyznaczone odchylenia:
+
+```{r}
+names(odchylenie) <- colnames(wyniki)
+round(odchylenie, 4)
+```
+
+
+Poniżej przedstawiono również wykresy rozkładów a posteriori uzyskane z podejścia analitycznego (z lewej) i te uzyskane poprzez zastosowanie algorytmu Gibbsa.
+
+```{r}
+###wykresy gibs
+{
+  par(mfrow=c(3,2))
+  
+  #beta1
+
+  plot(dist_beta1, x = seq(-100,100), xlab = "", main=expression(paste("Rozkład a posteriori (analityczny)", beta[1] )), type='l', lwd=3)
+  plot(density(wyniki$`(Intercept)`), xlab = "", main=expression(paste("Rozkład a posteriori (Gibbs) ", beta[1] )), lwd=3)
+
+  #beta2
+
+  plot(dist_beta2, x = seq(3,6,0.01), xlab = "", main=expression(paste("Rozkład a posteriori (analityczny)", beta[2] )), type='l', lwd=3)
+  plot(density(wyniki$rm), xlab = "", main=expression(paste("Rozkład a posteriori (Gibbs) ", beta[2] )), lwd=3)
+  
+  #beta3
+ 
+  plot(dist_beta3, x = seq(-0.08,-0.06,0.00001), xlab = "", main=expression(paste("Rozkład a posteriori (analityczny)", beta[3] )), type='l', lwd=3)
+  plot(density(wyniki$crim), xlab = "", main=expression(paste("Rozkład a posteriori (Gibbs) ", beta[3] )), lwd=3)
+  
+  par(mfrow=c(3,2))
+  #beta4
+
+  plot(dist_beta4, x = seq(-.57,-.54,0.0001), xlab = "", main=expression(paste("Rozkład a posteriori (analityczny)", beta[4] )), type='l', lwd=3)
+  plot(density(wyniki$lstat), xlab = "", main=expression(paste("Rozkład a posteriori (Gibbs) ", beta[4] )), lwd=3)
+  
+  #beta5
+
+  plot(dist_beta5, x = seq(-.95,-.8,0.001), xlab = "", main=expression(paste("Rozkład a posteriori (analityczny)", beta[5] )), type='l', lwd=3)
+  plot(density(wyniki$ptratio), xlab = "", main=expression(paste("Rozkład a posteriori (Gibbs) ", beta[5] )), lwd=3)
+  
+  #beta6
+
+  plot(dist_beta6, x = seq(0.01,0.04,0.0001), xlab = "", main=expression(paste("Rozkład a posteriori (analityczny)", beta[6] )), type='l', lwd=3)
+  plot(density(wyniki$indus), xlab = "", main=expression(paste("Rozkład a posteriori (Gibbs) ", beta[6] )), lwd=3)
+  
+  
+  
+  print("Dla parametru sigma:")
+  
+  
+  grid.arrange(nrow = 1, w2 + ggtitle("Rozkład a posteriori parametru sigma (analitycznie)"))
+  
+  par(mfrow=c(1,1))
+  plot(density(wyniki$sigma), xlab = "", main= "Rozkład a posteriori parametru sigma (Gibbs)", lwd = 3)
+  
+  
+}
+
+```
+
+
+Widać, że dla parametrów beta wyznaczone rozkłady są węższe po wyznaczeniu ich analitycznie (oprócz wyrazu wolnego, gdzie jest odwrotnie oraz $Beta_2$, którego postać rozkładu jest podobna). Widać jednak zmiany jeśli chodzi wartości dla poszczególnych parametrów.   
+
+```{r}
+
+por <- rbind( Gibbs = prognozy, Analitycznie = as.vector(pars$beta1))
+por
+
+```
+
+
+Wartości oszacowań parametrów otzymane tymi 2 metodami rożnią się - widać, to szczególnie na przykładzie wyrazu wolnego, który jest zdecydowanie mniejszy w przypadku wyznaczania go algorytmem Gibbsa. Pozostałe parametry są jednak większe (oprócz indus) niż w przypadku wyznaczania ich analitycznie.
+
+```{r}
+
+```
